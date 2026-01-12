@@ -1,4 +1,10 @@
+# Python
 .venv/
 __pycache__/
 *.pyc
+
+# Logs
 *.log
+
+# Backups
+*.bundle
