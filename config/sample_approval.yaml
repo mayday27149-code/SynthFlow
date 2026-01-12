@@ -1,0 +1,27 @@
+name: "ApprovalProcess"
+version: "1.0.0"
+description: "A sample approval process"
+steps:
+  - id: "step_1"
+    type: "element_locator"
+    name: "Locate Input"
+    params:
+      selector: "#amount-input"
+      method: "css"
+
+  - id: "step_2"
+    type: "operation_executor"
+    name: "Input Amount"
+    params:
+      action: "type"
+      target: "step_1"
+      value: "1000"
+
+  - id: "step_3"
+    type: "review"
+    name: "Manager Review"
+    params:
+      reason: "Approve or reject budget"
+      auto_approve: true
+      data_keys: ["step_2"]
+
