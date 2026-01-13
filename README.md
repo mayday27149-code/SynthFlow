@@ -40,7 +40,24 @@ python web_main.py
 http://localhost:8000/
 ```
 
-首页展示当前 config 目录下的流程配置列表，可选择一个配置并触发执行，随后展示执行状态与时间线。
+首页展示当前 config 目录下的流程配置列表，可选择一个配置并触发执行。
+
+### 人工中断与监控
+
+- 监控与交互页面: `http://localhost:8000/monitor`
+- 在流程执行中，若存在人工交互节点（human_interaction），监控页会弹出操作面板并提供三种决策：
+  - 执行（Execute）：继续执行当前任务
+  - 跳过（Skip）：跳过当前任务，进入下一条
+  - 结束（Stop）：立即终止当前流程
+- 监控页右上角提供“关闭服务 (Shutdown)”按钮，会优雅关闭浏览器并停止服务，避免持久化浏览器目录被锁导致重启不生效。
+
+### Playwright 环境说明
+
+- 项目使用 Playwright 启动持久化浏览器上下文（Chromium），首次安装完成后需执行：
+  ```bash
+  playwright install chromium
+  ```
+- 如遇到 “user data directory is already in use / SingletonLock” 等错误，说明上次浏览器未被优雅关闭。请在监控页点击“Shutdown”或手动关闭相关进程后重启。
 
 ## Docker 镜像
 
@@ -70,12 +87,13 @@ docker run --rm synthflow-poc python main.py
 
 ## 示例流程配置
 
-当前提供两个示例:
+当前提供示例:
 
 - config/sample_process.yaml: 搜索流程示例
 - config/sample_approval.yaml: 审批流程示例
+- config/ab_human_loop.yaml: “人工确认 + 点击/刷新/再点击”的循环示例（可在首页选择执行，并在监控页进行人工决策）
 
-均可通过命令行入口或 Web 界面执行。
+均可通过命令行入口或 Web 界面执行与监控。
 
 ## 测试
 
@@ -93,4 +111,3 @@ python -m unittest discover -s tests
 2. 启动 python web_main.py, 在浏览器中访问 Web 控制台。
 3. 通过 Web 界面分别运行两个示例流程并查看结果。
 4. 构建并运行 Docker 镜像后，通过浏览器访问容器中的 Web 界面。
-

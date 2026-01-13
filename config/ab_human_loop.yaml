@@ -1,0 +1,22 @@
+description: 人工确认 + 点击/刷新/再点击 的循环示例
+name: AB_HumanLoop_Example
+steps:
+- id: open_a_system
+  name: ''
+  next_step: null
+  on_error: null
+  params:
+    action: click
+    target: '#submit-btn'
+    value: null
+  type: operation_executor
+- id: main_loop
+  name: ''
+  next_step: null
+  on_error: null
+  params:
+    action: click
+    target: '#submit-btn'
+    value: null
+  type: operation_executor
+version: '1.0'

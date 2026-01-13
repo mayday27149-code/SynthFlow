@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from enum import Enum
 
 from .config_parser import ProcessModel, StepModel
@@ -35,8 +35,30 @@ class ExecutionEngine:
         self.sm = strategy_manager
         self.tracker = state_tracker
         self._status = ExecutionStatus.PENDING
-        self._context: Dict[str, Any] = {} # Shared context for the process
+        # self._context removed, use tracker context
         self.logger = get_logger("ExecutionEngine")
+
+    def _resolve_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        resolved = {}
+        if not params:
+            return {}
+        for k, v in params.items():
+            if isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                key_path = v[2:-1] 
+                val = self.tracker.get_context(key_path)
+                # Simple fallback for step_id.output nesting if stored as flat keys or dicts
+                # Assuming tracker.get_context handles exact keys. 
+                # If not found, try to look into dicts
+                if val is None and "." in key_path:
+                    parts = key_path.split(".", 1)
+                    base_obj = self.tracker.get_context(parts[0])
+                    if isinstance(base_obj, dict):
+                        val = base_obj.get(parts[1])
+                
+                resolved[k] = val if val is not None else v
+            else:
+                resolved[k] = v
+        return resolved
 
     def execute(self, process_model: ProcessModel) -> ExecutionResult:
         """
@@ -45,90 +67,227 @@ class ExecutionEngine:
         self._status = ExecutionStatus.RUNNING
         self.tracker.snapshot(None, "started", {"process_name": process_model.name})
         
-        current_step_idx = 0
-        steps = process_model.steps
-        
-        # Simple pointer based execution to allow jumps
-        # Map step IDs to indices for easier jumps
+        try:
+            self._execute_sequence(process_model.steps)
+        except Exception as e:
+            self.logger.error(f"Process execution failed: {e}")
+            return ExecutionResult(ExecutionStatus.FAILED, error=str(e))
+                
+        self._status = ExecutionStatus.COMPLETED
+        self.tracker.snapshot(None, "completed")
+        return ExecutionResult(ExecutionStatus.COMPLETED)
+
+    def _execute_sequence(self, steps: List[StepModel]):
+        """
+        Execute a sequence of steps.
+        Handles linear flow and explicit jumps within the sequence.
+        """
+        if not steps:
+            return
+
         step_map = {step.id: i for i, step in enumerate(steps)}
-        
-        current_step_id = steps[0].id if steps else None
+        current_step_id = steps[0].id
         
         while current_step_id and self._status == ExecutionStatus.RUNNING:
             if current_step_id not in step_map:
-                error_msg = f"Step ID {current_step_id} not found"
-                self.tracker.snapshot(current_step_id, "error", {"error": error_msg})
-                return ExecutionResult(ExecutionStatus.FAILED, error=error_msg)
+                raise ValueError(f"Step ID {current_step_id} not found in current scope")
             
             step = steps[step_map[current_step_id]]
-            self.tracker.snapshot(step.id, "executing", {"type": step.type})
             
             try:
-                # 1. Execute Strategy (Pre-step)
-                # e.g., check if we need to pause or check conditions
-                
-                # 2. Execute Component
-                # Find component handler for this step type
-                # For simplicity, we assume component_type matches step.type or we map it
-                component_type = step.type
-                
-                # Handle special "review" type or generic components
-                if component_type == "review":
-                     # Invoke review service
-                     review_component = self.cm.get_component("review_service")
-                     result = review_component.execute(self._context, step.params)
-                     # Review might pause execution or return result immediately (if automated/mocked)
-                     if result.get("status") == "rejected":
-                         raise Exception(f"Review rejected: {result.get('reason')}")
+                if step.type == "loop":
+                    self._execute_loop(step)
+                elif step.type == "condition":
+                    self._execute_condition(step)
                 else:
-                    # Generic component execution
-                    try:
-                        component = self.cm.get_component(component_type)
-                        result = component.execute(self._context, step.params)
-                        # Store result in context if needed
-                        if result:
-                            self._context[step.id] = result
-                    except ValueError:
-                         # Fallback or error if component not found
-                         self.logger.warning(f"Warning: No component found for type '{component_type}'. simulating...")
-                         time.sleep(0.5)
-                
-                self.tracker.snapshot(step.id, "completed")
-                
+                    result = self._execute_atomic_step(step)
+                    # Check for Flow Control (Skip/Stop)
+                    if isinstance(result, dict) and "action" in result:
+                        action = result["action"]
+                        if action == "skip":
+                            self.logger.info("Flow Control: SKIP requested.")
+                            break # Break sequence? No, skip means 'continue' in loop context.
+                            # But _execute_sequence is the body of the loop.
+                            # If we break here, we return to _execute_loop, which proceeds to next iteration.
+                            # So 'break' is correct for 'continue loop'.
+                            # Wait, what if this sequence is NOT a loop body but the main process?
+                            # If main process, 'break' ends the process (completed).
+                            # This seems acceptable.
+                        elif action == "stop":
+                            self.logger.info("Flow Control: STOP requested.")
+                            self._status = ExecutionStatus.COMPLETED # Or cancelled?
+                            return # Stop everything
+
                 # Determine next step
                 if step.next_step:
                     current_step_id = step.next_step
                 else:
-                    # Default to next in list
-                    current_idx = step_map[current_step_id]
+                    # Default: next in list
+                    current_idx = step_map[step.id]
                     if current_idx + 1 < len(steps):
                         current_step_id = steps[current_idx + 1].id
                     else:
-                        current_step_id = None # End of process
-
+                        current_step_id = None
+                        
             except Exception as e:
+                self.logger.error(f"Step {step.id} failed: {e}")
                 self.tracker.snapshot(step.id, "failed", {"error": str(e)})
-                # Error handling strategy
-                error_strategy = self.sm.get_current_strategy("error_handling")
-                if error_strategy:
-                     decision = error_strategy.apply({"error": e, "step": step, "context": self._context})
-                     if decision == "retry":
-                         continue # Retry same step
-                     elif decision == "skip":
-                         # Move to next
-                         current_idx = step_map[current_step_id]
-                         if current_idx + 1 < len(steps):
-                             current_step_id = steps[current_idx + 1].id
-                         else:
-                             current_step_id = None
-                         continue
-                
-                self._status = ExecutionStatus.FAILED
-                return ExecutionResult(ExecutionStatus.FAILED, error=str(e))
+                if step.on_error == "continue":
+                    self.logger.info(f"Continuing after error in step {step.id}")
+                    # Try to move next
+                    current_idx = step_map[step.id]
+                    if current_idx + 1 < len(steps):
+                        current_step_id = steps[current_idx + 1].id
+                    else:
+                        current_step_id = None
+                else:
+                    raise e
 
-        self._status = ExecutionStatus.COMPLETED
-        self.tracker.snapshot(None, "completed")
-        return ExecutionResult(ExecutionStatus.COMPLETED, self._context)
+    def _execute_loop(self, step: StepModel):
+        """Execute a loop step"""
+        self.tracker.snapshot(step.id, "loop_start", {"type": step.loop.type})
+        loop_config = step.loop
+        
+        if loop_config.type == "count":
+            count = loop_config.count
+            if not count:
+                raise ValueError("Loop count must be specified for 'count' type")
+            
+            for i in range(count):
+                if self._status != ExecutionStatus.RUNNING: break
+                self.tracker.set_context("loop_index", i)
+                self.logger.info(f"Loop {step.id} iteration {i+1}/{count}")
+                self._execute_sequence(loop_config.steps)
+                
+        elif loop_config.type == "while_element":
+            selector = loop_config.condition
+            try:
+                # Get OperationExecutor to access browser
+                # Assuming 'operation_executor' is registered
+                op_exec = self.cm.get_component("operation_executor")
+                # We need to access the underlying browser manager or page
+                # Since op_exec has browser_manager as public attribute (based on my previous read)
+                if hasattr(op_exec, 'browser_manager'):
+                    page = op_exec.browser_manager.get_page()
+                    
+                    i = 0
+                    while self._status == ExecutionStatus.RUNNING:
+                        # Check if element is visible
+                        if not page.is_visible(selector):
+                            self.logger.info(f"Loop condition ended: {selector} not visible.")
+                            break
+                            
+                        self.tracker.set_context("loop_index", i)
+                        self.logger.info(f"Loop {step.id} iteration {i+1} (while {selector})")
+                        self._execute_sequence(loop_config.steps)
+                        i += 1
+                else:
+                    self.logger.warning("OperationExecutor does not expose browser_manager. Cannot execute while_element loop.")
+                    
+            except Exception as e:
+                self.logger.error(f"Failed to execute while_element loop: {e}")
+                raise e
+
+    def _execute_condition(self, step: StepModel):
+        """Execute a condition step"""
+        # TODO: Implement condition logic
+        pass
+
+    def _execute_atomic_step(self, step: StepModel):
+        """Execute a single atomic step (L-A-V)"""
+        self.tracker.snapshot(step.id, "executing", {"type": step.type})
+        
+        # Resolve params with context
+        final_params = self._resolve_params(step.params)
+        
+        # If new L-A-V fields exist, dump them to dict and merge/pass them
+        if step.locator or step.action:
+                lav_params = {}
+                if step.locator: lav_params["locator"] = step.locator.model_dump()
+                if step.action: lav_params["action"] = step.action.model_dump()
+                if step.verification: lav_params["verification"] = step.verification.model_dump()
+                
+                self._recursive_resolve(lav_params)
+                final_params.update(lav_params)
+        
+        # Execute Component
+        component_type = step.type
+        if component_type == "interaction":
+            component_type = "operation_executor"
+        
+        try:
+            # Get component (with fallbacks)
+            try:
+                component = self.cm.get_component(component_type)
+            except ValueError:
+                component = self.cm.get_component("OperationExecutor")
+
+            # Execute
+            # INJECT TRACKER into context for HumanInteraction
+            ctx = self.tracker.get_all_context().copy()
+            ctx["_tracker"] = self.tracker
+            
+            result = component.execute(ctx, final_params)
+            
+            # Store result
+            if result is not None:
+                self.tracker.set_context(f"{step.id}.output", result)
+                
+                # Handle Data Binding
+                if step.data and step.data.outputs:
+                    for context_key, source_path in step.data.outputs.items():
+                        val = self._get_value_by_path(result, source_path)
+                        self.tracker.set_context(context_key, val)
+                        self.logger.info(f"Data Bound: {context_key} = {val}")
+
+            self.tracker.snapshot(step.id, "completed", {"result": result})
+            return result
+            
+        except Exception as e:
+            # Re-raise to be handled by _execute_sequence
+            raise e
+
+
+    def _recursive_resolve(self, obj: Any):
+        """Helper to resolve ${var} in nested dicts/lists in-place"""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, (dict, list)):
+                    self._recursive_resolve(v)
+                elif isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                    key_path = v[2:-1]
+                    val = self.tracker.get_context(key_path)
+                    obj[k] = val if val is not None else v
+        elif isinstance(obj, list):
+            for i, v in enumerate(obj):
+                if isinstance(v, (dict, list)):
+                    self._recursive_resolve(v)
+                elif isinstance(v, str) and v.startswith("${") and v.endswith("}"):
+                    key_path = v[2:-1]
+                    val = self.tracker.get_context(key_path)
+                    obj[i] = val if val is not None else v
+
+    def _get_value_by_path(self, data: Any, path: str) -> Any:
+        """Extract value from nested dict using dot notation (e.g. 'user.name')"""
+        if not path: return data
+        
+        # Special case: "return_value" might be the root of 'data' or a key inside it.
+        # If result is {"status": "success", "text": "abc"}
+        # path "text" -> "abc"
+        # path "return_value.text" -> "abc" (allow optional root prefix)
+        
+        keys = path.split(".")
+        curr = data
+        
+        if keys[0] == "return_value":
+            keys.pop(0)
+            
+        for k in keys:
+            if isinstance(curr, dict):
+                curr = curr.get(k)
+            else:
+                return None
+        return curr
 
     def pause(self):
         self._status = ExecutionStatus.PAUSED
