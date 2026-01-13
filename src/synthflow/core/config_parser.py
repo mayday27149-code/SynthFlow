@@ -4,13 +4,70 @@ import os
 from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel, Field, ValidationError
 
+# --- L-A-V-D Data Structures ---
+
+class LocatorModel(BaseModel):
+    type: str = Field(..., description="e.g., css, xpath, text, image")
+    value: str
+    frame: Optional[str] = None
+    timeout: Optional[int] = 5000
+
+class ActionModel(BaseModel):
+    type: str = Field(..., description="e.g., click, input, wait, screenshot")
+    human_like: bool = True
+    delay_before: float = 0.0
+    delay_after: float = 0.0
+    # For input/type actions
+    value: Optional[Union[str, float, int]] = None 
+
+class VerificationModel(BaseModel):
+    check: str = Field(..., description="e.g., visible, text_contains, url_contains")
+    selector: Optional[str] = None # Simple selector string for verification target
+    value: Optional[str] = None
+    timeout: int = 5000
+    on_fail: Optional[str] = "error" # error, retry, ignore
+
+class DataBindingModel(BaseModel):
+    # Extract output from this step to context
+    # Key = Context Variable Name, Value = Source Path (e.g. "return_value.url")
+    outputs: Dict[str, str] = Field(default_factory=dict)
+
+class LoopModel(BaseModel):
+    type: str = Field(..., description="e.g., count, while_selector, for_each")
+    count: Optional[int] = None
+    condition: Optional[str] = None
+    items: Optional[str] = None # For for_each, e.g., "${list_variable}"
+    steps: List['StepModel'] = Field(default_factory=list)
+
+class BranchModel(BaseModel):
+    condition: str
+    steps: List['StepModel'] = Field(default_factory=list)
+
 class StepModel(BaseModel):
     id: str
-    type: str  # e.g., "click", "input", "review", "ai_process"
+    type: str  # e.g., "interaction", "logic", "review", "loop", "condition"
     name: Optional[str] = None
+    
+    # Legacy params support (for backward compatibility)
     params: Dict[str, Any] = Field(default_factory=dict)
+    
+    # New L-A-V-D structures (Optional for now to allow mixed use)
+    locator: Optional[LocatorModel] = None
+    action: Optional[ActionModel] = None
+    verification: Optional[VerificationModel] = None
+    data: Optional[DataBindingModel] = None
+
+    # Logic structures
+    loop: Optional[LoopModel] = None
+    branches: Optional[List[BranchModel]] = None
+
     next_step: Optional[str] = None
-    on_error: Optional[str] = None # Strategy for error handling
+    on_error: Optional[str] = None
+
+# Resolve forward references
+StepModel.update_forward_refs()
+LoopModel.update_forward_refs()
+BranchModel.update_forward_refs()
 
 class ProcessModel(BaseModel):
     name: str

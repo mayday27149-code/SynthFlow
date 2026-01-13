@@ -190,8 +190,79 @@ class ExecutionEngine:
 
     def _execute_condition(self, step: StepModel):
         """Execute a condition step"""
-        # TODO: Implement condition logic
-        pass
+        self.tracker.snapshot(step.id, "condition_check", {"branches": len(step.branches) if step.branches else 0})
+        
+        if not step.branches:
+            self.logger.warning(f"Condition step {step.id} has no branches.")
+            return
+
+        matched = False
+        for branch in step.branches:
+            if self._evaluate_condition(branch.condition):
+                self.logger.info(f"Condition matched: {branch.condition}")
+                self._execute_sequence(branch.steps)
+                matched = True
+                break # First match wins
+        
+        if not matched:
+            self.logger.info(f"No branches matched in step {step.id}")
+
+    def _evaluate_condition(self, condition: str) -> bool:
+        """
+        Simple condition evaluator.
+        Supports:
+        - "${var} == 'value'"
+        - "${var} != 'value'"
+        - "${var}" (truthiness)
+        """
+        # Resolve variables in the condition string first? 
+        # No, because string replacement might break quotes.
+        # We should parse the condition logic first.
+        
+        # Simple parsing for ==
+        if "==" in condition:
+            parts = condition.split("==")
+            left = parts[0].strip()
+            right = parts[1].strip().strip("'").strip('"')
+            
+            # Resolve left side if it's a variable
+            val_left = self._resolve_value(left)
+            
+            # Right side is usually a literal string in our simple parser, 
+            # but could be a variable too.
+            val_right = self._resolve_value(right) if "${" in right else right
+            
+            return str(val_left) == str(val_right)
+            
+        elif "!=" in condition:
+            parts = condition.split("!=")
+            left = parts[0].strip()
+            right = parts[1].strip().strip("'").strip('"')
+            
+            val_left = self._resolve_value(left)
+            val_right = self._resolve_value(right) if "${" in right else right
+            
+            return str(val_left) != str(val_right)
+            
+        else:
+            # Truthiness check
+            val = self._resolve_value(condition)
+            return bool(val)
+
+    def _resolve_value(self, value_str: str) -> Any:
+        """Helper to resolve a single value string like '${var}'"""
+        if isinstance(value_str, str) and value_str.startswith("${") and value_str.endswith("}"):
+            key_path = value_str[2:-1]
+            val = self.tracker.get_context(key_path)
+            # Fallback for dict access dot notation if get_context doesn't support it natively
+            if val is None and "." in key_path:
+                parts = key_path.split(".", 1)
+                base_obj = self.tracker.get_context(parts[0])
+                if isinstance(base_obj, dict):
+                    val = base_obj.get(parts[1])
+            return val
+        return value_str
+
 
     def _execute_atomic_step(self, step: StepModel):
         """Execute a single atomic step (L-A-V)"""

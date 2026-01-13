@@ -4,13 +4,36 @@
 
 SynthFlow 是一个基于配置的流程编排引擎 PoC，通过可插拔组件和策略管理执行自动化步骤，并提供命令行入口和简单 Web 管理界面。
 
+## v0.5 版本里程碑 (当前版本)
+
+本版本重点实现了 A/B 系统跨系统数据路由与离线部署支持。
+
+### 1. 核心功能
+- **A/B 系统路由**: 实现了 "A系统采集 -> 人工审核打标(类型/模式) -> 自动路由分发" 的完整逻辑。
+  - 支持 `DataBinding` 将人工交互结果自动映射为上下文变量。
+  - 支持 `Condition` 节点根据上下文变量动态选择执行分支。
+- **人工介入增强**: Web 监控端支持查看任务详情并进行打标操作（模拟），结果回传至引擎。
+
+### 2. 部署与交付
+- **Docker 离线部署**: 提供了完整的 `Dockerfile` 和 `docker-compose.yaml`。
+- **离线包导出**: 使用 `scripts/export_offline_package.bat` 可一键导出包含镜像和源码的离线部署包。
+
+### 3. 验证脚本
+- `scripts/verification/verify_ab_routing.py`: 验证 A->Human->B 的路由逻辑与数据绑定。
+- `scripts/verification/verify_human_loop.py`: 验证人工介入的中断、恢复与决策流程。
+- `scripts/verification/verify_browser_behavior.py`: 验证浏览器上下文的持久化与单例管理。
+
+---
+
 ## 目录结构
 
 - main.py: 命令行入口
 - web_main.py: Web 管理界面入口
 - src/synthflow: 核心引擎与组件
 - config: 示例流程配置
-- tests: 基础测试用例
+- scripts: 运维与验证脚本
+  - export_offline_package.bat: 离线包导出脚本
+  - verification/: 功能验证脚本集
 
 ## 本地运行
 
@@ -73,18 +96,6 @@ docker build -t synthflow-poc .
 docker run --rm -p 8000:8000 synthflow-poc
 ```
 
-然后访问:
-
-```text
-http://localhost:8000/
-```
-
-如需在容器内运行命令行 PoC，可以覆盖启动命令:
-
-```bash
-docker run --rm synthflow-poc python main.py
-```
-
 ## 示例流程配置
 
 当前提供示例:
@@ -100,14 +111,5 @@ docker run --rm synthflow-poc python main.py
 运行所有单元测试:
 
 ```bash
-python -m unittest discover -s tests
+python -m unittest discover tests
 ```
-
-## 演示视频建议
-
-可录制一个短视频展示以下步骤:
-
-1. 本地运行 python main.py 并展示日志输出与时间线。
-2. 启动 python web_main.py, 在浏览器中访问 Web 控制台。
-3. 通过 Web 界面分别运行两个示例流程并查看结果。
-4. 构建并运行 Docker 镜像后，通过浏览器访问容器中的 Web 界面。

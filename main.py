@@ -1,8 +1,8 @@
 import sys
 import os
 
-# Add src to path to ensure imports work correctly
-sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+# Add src to the beginning of sys.path to ensure local imports override any installed package
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from synthflow.core.config_parser import ConfigParser
 from synthflow.core.component_manager import ComponentManager
@@ -15,6 +15,8 @@ from synthflow.utils.logger import setup_logger
 from synthflow.components.element_locator import ElementLocator
 from synthflow.components.operation_executor import OperationExecutor
 from synthflow.components.review_service import ReviewService
+from synthflow.components.human_interaction import HumanInteraction
+from synthflow.components.data_processing import DataExtractor, DataEntry
 
 def main():
     # Initialize Logger
@@ -33,6 +35,9 @@ def main():
     component_manager.register_component("element_locator", ElementLocator)
     component_manager.register_component("operation_executor", OperationExecutor)
     component_manager.register_component("review_service", ReviewService)
+    component_manager.register_component("human_interaction", HumanInteraction)
+    component_manager.register_component("data_extractor", DataExtractor)
+    component_manager.register_component("data_entry", DataEntry)
     
     # 3. Initialize Engine
     engine = ExecutionEngine(component_manager, strategy_manager, state_tracker)

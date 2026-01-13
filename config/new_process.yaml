@@ -1,0 +1,13 @@
+description: 新功能测试
+name: 测试
+steps:
+- id: step_0
+  name: 点击测试
+  next_step: null
+  on_error: null
+  params:
+    action: click
+    target: '#submit'
+    value: null
+  type: operation_executor
+version: '1.0'

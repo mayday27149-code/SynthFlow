@@ -1,0 +1,39 @@
+name: Cross System Flow
+description: Demonstrates data flow between A and B systems with human interaction
+version: "1.0"
+steps:
+  - id: step_login_a
+    type: human_interaction
+    params:
+      instruction: "Please login to System A via Face ID"
+      timeout: 3
+    next_step: step_extract_data
+
+  - id: step_extract_data
+    type: data_extractor
+    params:
+      source: "System A Task List"
+      fields: 
+        - evidence
+        - elements
+    next_step: step_review_check
+
+  - id: step_review_check
+    type: review_service
+    params:
+      role: "auditor"
+    next_step: step_login_b
+
+  - id: step_login_b
+    type: human_interaction
+    params:
+      instruction: "Please login to System B via Password + Voice Print"
+      timeout: 3
+    next_step: step_data_entry
+
+  - id: step_data_entry
+    type: data_entry
+    params:
+      target: "System B Entry Form"
+      data: "${step_extract_data.output}"
+    next_step: null

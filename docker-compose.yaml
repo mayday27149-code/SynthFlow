@@ -1,0 +1,15 @@
+services:
+  synthflow:
+    image: synthflow:latest
+    container_name: synthflow
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./browser_data:/app/browser_data
+      - ./config:/app/config
+      - ./logs:/app/logs
+    # IPC mode host is recommended for Chrome to avoid crashing
+    ipc: host
+    restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1

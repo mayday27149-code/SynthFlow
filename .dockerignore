@@ -7,3 +7,7 @@ __pycache__
 .git
 tests
 *.log
+browser_data/
+logs/
+config/
+scripts/

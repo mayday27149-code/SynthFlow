@@ -8,3 +8,12 @@ __pycache__/
 
 # Backups
 *.bundle
+*.zip
+
+# Project Specific
+browser_data/
+synthflow.db
+dist/
+synthflow_offline_pkg/
+.idea/
+.vscode/
